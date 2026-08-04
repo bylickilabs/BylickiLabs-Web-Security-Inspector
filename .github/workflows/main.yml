@@ -1,0 +1,716 @@
+# =============================================================================
+# BylickiLabs Web Security Inspector
+# =============================================================================
+
+name: BylickiLabs CI, Security, Build und Release
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    tags:
+      - "v*.*.*"
+
+  pull_request:
+    branches:
+      - main
+      - develop
+
+  schedule:
+    - cron: "15 6 * * 1"
+
+  workflow_dispatch:
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  APP_NAME: BylickiLabsWebSecurityInspector
+  APP_DISPLAY_NAME: BylickiLabs Web Security Inspector
+  PYTHONUTF8: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  QT_QPA_PLATFORM: offscreen
+
+permissions:
+  contents: read
+
+jobs:
+
+  tests:
+    name: Tests mit Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.11"
+          - "3.12"
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Python ${{ matrix.python-version }} einrichten
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Systembibliotheken für PySide6 installieren
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            libegl1 \
+            libgl1 \
+            libxkbcommon-x11-0 \
+            libxcb-cursor0
+
+      - name: Python-Werkzeuge aktualisieren
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip setuptools wheel
+
+      - name: Projektabhängigkeiten installieren
+        run: |
+          set -euo pipefail
+
+          if [[ ! -f requirements.txt ]]; then
+            echo "::error file=requirements.txt::Die Datei requirements.txt fehlt."
+            exit 1
+          fi
+
+          python -m pip install -r requirements.txt
+
+          if [[ -f requirements-dev.txt ]]; then
+            python -m pip install -r requirements-dev.txt
+          fi
+
+          python -m pip install \
+            pytest \
+            pytest-cov \
+            ruff
+
+      - name: Installierte Abhängigkeiten prüfen
+        run: |
+          set -euo pipefail
+          python -m pip check
+
+      - name: Python-Dateien kompilieren
+        run: |
+          set -euo pipefail
+
+          targets=()
+
+          if [[ -d app ]]; then
+            targets+=("app")
+          fi
+
+          if [[ -f main.py ]]; then
+            targets+=("main.py")
+          fi
+
+          if (( ${#targets[@]} == 0 )); then
+            echo "::error::Weder app/ noch main.py wurden gefunden."
+            exit 1
+          fi
+
+          python -m compileall -q "${targets[@]}"
+
+      - name: Ruff-Codeanalyse ausführen
+        run: |
+          set -euo pipefail
+
+          targets=()
+
+          if [[ -d app ]]; then
+            targets+=("app")
+          fi
+
+          if [[ -d tests ]]; then
+            targets+=("tests")
+          fi
+
+          if [[ -f main.py ]]; then
+            targets+=("main.py")
+          fi
+
+          python -m ruff check "${targets[@]}"
+
+      - name: Ruff-Formatierung kontrollieren
+        run: |
+          set -euo pipefail
+
+          targets=()
+
+          if [[ -d app ]]; then
+            targets+=("app")
+          fi
+
+          if [[ -d tests ]]; then
+            targets+=("tests")
+          fi
+
+          if [[ -f main.py ]]; then
+            targets+=("main.py")
+          fi
+
+          python -m ruff format --check "${targets[@]}"
+
+      - name: Tests mit Coverage ausführen
+        if: matrix.python-version == '3.11'
+        run: |
+          set -euo pipefail
+
+          if [[ ! -d tests ]]; then
+            echo "::error::Das Verzeichnis tests/ fehlt."
+            exit 1
+          fi
+
+          python -m pytest \
+            -q \
+            --maxfail=1 \
+            --disable-warnings \
+            --junitxml=test-results-python-${{ matrix.python-version }}.xml \
+            --cov=app \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml
+
+      - name: Tests ohne Coverage ausführen
+        if: matrix.python-version != '3.11'
+        run: |
+          set -euo pipefail
+
+          if [[ ! -d tests ]]; then
+            echo "::error::Das Verzeichnis tests/ fehlt."
+            exit 1
+          fi
+
+          python -m pytest \
+            -q \
+            --maxfail=1 \
+            --disable-warnings \
+            --junitxml=test-results-python-${{ matrix.python-version }}.xml
+
+      - name: Testergebnisse hochladen
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-python-${{ matrix.python-version }}
+          path: |
+            test-results-python-${{ matrix.python-version }}.xml
+            coverage.xml
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 6
+
+
+  security:
+    name: Python-Sicherheitsprüfung
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Python einrichten
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Abhängigkeiten und Security-Werkzeuge installieren
+        run: |
+          set -euo pipefail
+
+          python -m pip install --upgrade pip setuptools wheel
+
+          if [[ ! -f requirements.txt ]]; then
+            echo "::error file=requirements.txt::Die Datei requirements.txt fehlt."
+            exit 1
+          fi
+
+          python -m pip install -r requirements.txt
+          python -m pip install bandit pip-audit
+
+          mkdir -p security-reports
+
+      - name: Bandit ausführen
+        id: bandit
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+
+          targets=()
+
+          if [[ -d app ]]; then
+            targets+=("app")
+          fi
+
+          if [[ -f main.py ]]; then
+            targets+=("main.py")
+          fi
+
+          if (( ${#targets[@]} == 0 )); then
+            echo "::error::Keine Python-Anwendungsdateien gefunden."
+            exit 1
+          fi
+
+          bandit \
+            --recursive "${targets[@]}" \
+            --severity-level medium \
+            --confidence-level medium \
+            --format json \
+            --output security-reports/bandit.json
+
+      - name: Abhängigkeiten mit pip-audit prüfen
+        id: pip_audit
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+
+          pip-audit \
+            --requirement requirements.txt \
+            --progress-spinner off \
+            --format json \
+            --output security-reports/pip-audit.json
+
+      - name: Security-Berichte hochladen
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-security-reports
+          path: security-reports/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      - name: Security-Ergebnisse auswerten
+        if: always()
+        run: |
+          failed=0
+
+          if [[ "${{ steps.bandit.outcome }}" == "failure" ]]; then
+            echo "::error::Bandit hat sicherheitsrelevante Befunde erkannt."
+            failed=1
+          fi
+
+          if [[ "${{ steps.pip_audit.outcome }}" == "failure" ]]; then
+            echo "::error::pip-audit hat bekannte Schwachstellen erkannt."
+            failed=1
+          fi
+
+          exit "$failed"
+
+
+  codeql:
+    name: CodeQL-Analyse
+    if: >-
+      github.event.repository.visibility == 'public' &&
+      (
+        github.event_name != 'pull_request' ||
+        github.event.pull_request.head.repo.full_name == github.repository
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    permissions:
+      contents: read
+      security-events: write
+      packages: read
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: CodeQL initialisieren
+        uses: github/codeql-action/init@v4
+        with:
+          languages: python
+          queries: security-extended,security-and-quality
+
+      - name: Python einrichten
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Projektabhängigkeiten installieren
+        run: |
+          set -euo pipefail
+
+          python -m pip install --upgrade pip
+
+          if [[ -f requirements.txt ]]; then
+            python -m pip install -r requirements.txt
+          fi
+
+      - name: CodeQL-Analyse ausführen
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:python"
+
+
+  build-windows:
+    name: Windows-Anwendung erstellen
+    needs:
+      - tests
+      - security
+    if: github.event_name != 'schedule'
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Python für den Windows-Build einrichten
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Build-Abhängigkeiten installieren
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          python -m pip install --upgrade pip setuptools wheel
+
+          if (-not (Test-Path "requirements.txt")) {
+            throw "Die Datei requirements.txt fehlt."
+          }
+
+          python -m pip install -r requirements.txt
+
+          if (Test-Path "requirements-dev.txt") {
+            python -m pip install -r requirements-dev.txt
+          }
+
+          python -m pip install pyinstaller pytest ruff
+
+          python -m pip check
+
+      - name: Windows-Codeprüfung ausführen
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $targets = @()
+
+          if (Test-Path "app") {
+            $targets += "app"
+          }
+
+          if (Test-Path "tests") {
+            $targets += "tests"
+          }
+
+          if (Test-Path "main.py") {
+            $targets += "main.py"
+          }
+
+          if ($targets.Count -eq 0) {
+            throw "Keine Python-Zieldateien gefunden."
+          }
+
+          python -m ruff check @targets
+
+          if (-not (Test-Path "tests")) {
+            throw "Das Verzeichnis tests fehlt."
+          }
+
+          python -m pytest -q --maxfail=1 --disable-warnings
+
+      - name: Vorherige Build-Verzeichnisse entfernen
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if (Test-Path "build") {
+            Remove-Item "build" -Recurse -Force
+          }
+
+          if (Test-Path "dist") {
+            Remove-Item "dist" -Recurse -Force
+          }
+
+          if (Test-Path "artifacts") {
+            Remove-Item "artifacts" -Recurse -Force
+          }
+
+          New-Item -ItemType Directory -Path "artifacts" | Out-Null
+
+      - name: Anwendung mit PyInstaller erstellen
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if (Test-Path "scripts\build_exe.cmd") {
+            Write-Host "Verwende scripts\build_exe.cmd"
+
+            cmd /c "scripts\build_exe.cmd"
+
+            if ($LASTEXITCODE -ne 0) {
+              throw "scripts\build_exe.cmd wurde mit Fehlercode $LASTEXITCODE beendet."
+            }
+          }
+          elseif (Test-Path "BylickiLabsWebSecurityInspector.spec") {
+            Write-Host "Verwende BylickiLabsWebSecurityInspector.spec"
+
+            python -m PyInstaller `
+              --noconfirm `
+              --clean `
+              "BylickiLabsWebSecurityInspector.spec"
+          }
+          elseif (Test-Path "main.py") {
+            Write-Host "Verwende den automatischen main.py-Fallback"
+
+            $arguments = @(
+              "--noconfirm",
+              "--clean",
+              "--windowed",
+              "--name", $env:APP_NAME
+            )
+
+            $iconCandidates = @(
+              "assets\app_icon.ico",
+              "assets\bwsi.ico"
+            )
+
+            foreach ($icon in $iconCandidates) {
+              if (Test-Path $icon) {
+                $arguments += @("--icon", $icon)
+                break
+              }
+            }
+
+            if (Test-Path "assets") {
+              $arguments += @("--add-data", "assets;assets")
+            }
+
+            $arguments += "main.py"
+
+            python -m PyInstaller @arguments
+          }
+          else {
+            throw "Weder Build-Skript, Spec-Datei noch main.py wurden gefunden."
+          }
+
+          if (-not (Test-Path "dist")) {
+            throw "PyInstaller hat kein dist-Verzeichnis erzeugt."
+          }
+
+          $distItems = Get-ChildItem "dist" -Force
+
+          if ($distItems.Count -eq 0) {
+            throw "Das dist-Verzeichnis ist leer."
+          }
+
+      - name: Build-Paket und Prüfsumme erzeugen
+        id: package
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          }
+          else {
+            $version = "2.0.0-build.$env:GITHUB_RUN_NUMBER"
+          }
+
+          $archiveName = "$env:APP_NAME-$version-Windows-x64.zip"
+          $archivePath = Join-Path "artifacts" $archiveName
+
+          Compress-Archive `
+            -Path "dist\*" `
+            -DestinationPath $archivePath `
+            -CompressionLevel Optimal `
+            -Force
+
+          if (-not (Test-Path $archivePath)) {
+            throw "Das ZIP-Paket wurde nicht erstellt."
+          }
+
+          $hash = Get-FileHash $archivePath -Algorithm SHA256
+          $checksumLine = "$($hash.Hash.ToLower())  $archiveName"
+
+          $checksumLine |
+            Set-Content `
+              -Path "artifacts\SHA256SUMS.txt" `
+              -Encoding ascii
+
+          $manifest = [ordered]@{
+            application = $env:APP_DISPLAY_NAME
+            package_name = $archiveName
+            version = $version
+            platform = "Windows x64"
+            python_version = (python --version 2>&1)
+            commit = $env:GITHUB_SHA
+            branch_or_tag = $env:GITHUB_REF_NAME
+            workflow_run = $env:GITHUB_RUN_NUMBER
+            workflow_attempt = $env:GITHUB_RUN_ATTEMPT
+            repository = $env:GITHUB_REPOSITORY
+            sha256 = $hash.Hash.ToLower()
+            created_utc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          }
+
+          $manifest |
+            ConvertTo-Json -Depth 5 |
+            Set-Content `
+              -Path "artifacts\build-manifest.json" `
+              -Encoding utf8
+
+          "archive_name=$archiveName" |
+            Out-File `
+              -FilePath $env:GITHUB_OUTPUT `
+              -Append `
+              -Encoding utf8
+
+          Write-Host "Erstellt: $archivePath"
+          Write-Host "SHA-256: $($hash.Hash.ToLower())"
+
+      - name: Build-Herkunft bestätigen
+        if: >-
+          github.event_name != 'pull_request' &&
+          github.event.repository.visibility == 'public'
+        uses: actions/attest@v4
+        with:
+          subject-path: artifacts/*.zip
+
+      - name: Windows-Build als Artefakt hochladen
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-build
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+          overwrite: true
+
+
+  release:
+    name: GitHub-Release veröffentlichen
+    needs:
+      - build-windows
+    if: >-
+      github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Versions-Tag prüfen
+        run: |
+          set -euo pipefail
+
+          tag="${GITHUB_REF_NAME}"
+
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Ungültiger Versions-Tag: $tag"
+            echo "Erwartetes Format: v2.0.1 oder v2.1.0-beta.1"
+            exit 1
+          fi
+
+      - name: Windows-Build herunterladen
+        uses: actions/download-artifact@v5
+        with:
+          name: windows-build
+          path: release-assets
+
+      - name: Release-Dateien kontrollieren
+        run: |
+          set -euo pipefail
+
+          find release-assets -maxdepth 2 -type f -print
+
+          if ! find release-assets -type f -name "*.zip" -print -quit | grep -q .; then
+            echo "::error::Kein Windows-ZIP-Paket gefunden."
+            exit 1
+          fi
+
+          if [[ ! -f release-assets/SHA256SUMS.txt ]]; then
+            echo "::error::SHA256SUMS.txt fehlt."
+            exit 1
+          fi
+
+          if [[ ! -f release-assets/build-manifest.json ]]; then
+            echo "::error::build-manifest.json fehlt."
+            exit 1
+          fi
+
+      - name: GitHub-Release erstellen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          mapfile -d '' assets < <(
+            find release-assets \
+              -maxdepth 1 \
+              -type f \
+              -print0
+          )
+
+          if (( ${#assets[@]} == 0 )); then
+            echo "::error::Keine Release-Dateien gefunden."
+            exit 1
+          fi
+
+          release_arguments=(
+            release
+            create
+            "${GITHUB_REF_NAME}"
+            --repo
+            "${GITHUB_REPOSITORY}"
+            --title
+            "${APP_DISPLAY_NAME} ${GITHUB_REF_NAME}"
+            --generate-notes
+            --verify-tag
+          )
+
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+            release_arguments+=(--prerelease)
+          fi
+
+          release_arguments+=("${assets[@]}")
+
+          gh "${release_arguments[@]}"

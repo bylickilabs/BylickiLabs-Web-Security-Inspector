@@ -1,0 +1,11 @@
+{
+  "language": "de",
+  "theme": "dark",
+  "timeout_seconds": 12,
+  "sample_count": 3,
+  "verify_tls": true,
+  "enable_observatory": true,
+  "enable_pagespeed": true,
+  "pagespeed_api_key": "AIzaSyBRNFHAMG07r68BeENmr1sFAVJiT5OnieU",
+  "save_history": true
+}

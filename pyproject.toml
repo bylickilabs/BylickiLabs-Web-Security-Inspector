@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bylickilabs-web-security-inspector"
+version = "2.0.0"
+description = "Enterprise website security, configuration and statistical analysis desktop application"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Thorsten Bylicki", email = "" }]
+license = { text = "All Rights Reserved" }
+dependencies = [
+  "PySide6>=6.7,<7",
+  "numpy>=2.0,<3",
+  "scipy>=1.13,<2",
+  "matplotlib>=3.9,<4",
+  "requests>=2.32,<3",
+  "beautifulsoup4>=4.12,<5",
+  "dnspython>=2.6,<3",
+  "reportlab>=4.2,<5",
+]
+
+[project.scripts]
+bwsi = "main:main"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 110
+exclude = [".venv", "build", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = true
+check_untyped_defs = true
