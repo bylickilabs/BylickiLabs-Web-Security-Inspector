@@ -7,7 +7,8 @@
 
 ### Enterprise Website Security Analytics
 
-**Professional, bilingual desktop application for structured website, configuration, performance, and security analyses**
+|bilingual|desktop|application for structured website|configuration|performance|security analyses|
+|---|---|---|---|---|---|
 
 | [![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/bylickilabs/BylickiLabs-Web-Security-Inspector) | [![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/) | 
 |---|---|
