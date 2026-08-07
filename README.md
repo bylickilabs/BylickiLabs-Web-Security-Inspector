@@ -1,7 +1,7 @@
 <div align="center">
 
-|<img src="assets/bwsi.png" alt="BylickiLabs Web Security Inspector" width="1280" height="960">|
-|---|
+| <img src="assets/bwsi.png" alt="BylickiLabs Web Security Inspector" width="1280" height="960"> | <img width="1930" height="1257" alt="image" src="https://github.com/user-attachments/assets/fdba2c5e-9cdb-4be6-84bc-61adcc847657" /> |
+|---|---|
 
 # BylickiLabs Web Security Inspector
 
